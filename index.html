@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[你的名字] | 台灣師大物理系國際組</title>
+<meta name="description" content="[你的名字]，國立臺灣師範大學物理學系國際組大一學生。課程、筆記與專案。">
+<meta property="og:title" content="[你的名字] | 台灣師大物理系國際組">
+<meta property="og:description" content="國立臺灣師範大學物理學系國際組大一學生的個人網頁。">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+:root{--bg:#EEF2F4;--ink:#101820;--muted:#4A5865;--line:#D3DBE0;--card:#FFFFFF;--accent:#0B7A75;--footer:#101820;--footer-ink:#D6DEE4}
+@media (prefers-color-scheme:dark){:root{--bg:#0E151B;--ink:#E6EDF2;--muted:#A9B6C0;--line:#26323C;--card:#16202A;--accent:#4FC3BC;--footer:#080D11;--footer-ink:#D6DEE4}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.7 'Noto Sans TC',system-ui,sans-serif}
+a{color:var(--ink);text-decoration:none}a:hover{text-decoration:underline}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.wrap{max-width:1120px;margin:0 auto;padding-left:max(24px,env(safe-area-inset-left));padding-right:max(24px,env(safe-area-inset-right))}
+section{padding:80px 0;border-top:1px solid var(--line)}
+h1,h2,h3{font-family:'Space Grotesk','Noto Sans TC',sans-serif;margin:0;text-wrap:balance}
+h2{font-size:36px;line-height:1.2}
+.mono{font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.08em;color:var(--muted)}
+header .wrap{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 32px;padding-top:16px;padding-bottom:16px}
+header{border-bottom:1px solid var(--line)}
+.brand{font:700 20px 'Space Grotesk','Noto Sans TC',sans-serif}
+nav{display:flex;flex-wrap:wrap;gap:0 28px;font-size:15px}nav a{padding:10px 0}
+.hero{padding:72px 0 80px}
+.hero .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:48px}
+.hero .text{flex:1 1 420px;min-width:0;display:flex;flex-direction:column;gap:24px}
+.hero h1{font-size:clamp(44px,8vw,72px);line-height:1.05}
+.eyebrow{font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.08em;color:var(--accent)}
+.en{font:22px 'Space Grotesk',sans-serif;color:var(--muted)}
+.hero p{margin:0;max-width:520px}
+.btns{display:flex;flex-wrap:wrap;gap:12px}
+.btn{display:inline-flex;align-items:center;min-height:44px;padding:0 22px;border-radius:4px;font-weight:500;border:1.5px solid var(--ink)}
+.btn.fill{background:var(--ink);color:var(--bg)}
+.wave{flex:1 1 360px;min-width:0}.wave svg{width:100%;height:auto;display:block}
+.wave .eq{font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:8px}
+.cols{display:flex;flex-wrap:wrap;gap:40px 64px}
+.cols>h2{flex:1 1 240px;min-width:0}.cols>.body{flex:2 1 480px;min-width:0;max-width:640px}
+.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 32px;margin:32px 0}
+.facts div{padding:14px 0;border-top:1px solid var(--line)}
+.tags{display:flex;flex-wrap:wrap;gap:10px}.tags span{padding:6px 14px;border:1px solid var(--muted);border-radius:999px;font-size:15px}
+.sub{color:var(--muted);margin:8px 0 40px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px}
+.card{padding:28px;background:var(--card);border:1px solid var(--line);border-radius:6px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h3{font-size:22px}.card p{margin:0;color:var(--muted);font-size:15px}
+.row{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 32px;padding:24px 0;border-top:1px solid var(--line)}
+.row:first-child{border-top:1px solid var(--ink)}.row:last-child{border-bottom:1px solid var(--line)}
+.row .t{flex:3 1 320px;min-width:0}.row h3{font-size:22px}.row p{margin:0;color:var(--muted);font-size:15px}
+.row .d{flex:1 1 120px;min-width:0}
+.pill{flex:0 0 auto;padding:4px 12px;border-radius:999px;font-size:13px;font-weight:500;background:var(--line);color:var(--ink)}
+.contact div{display:flex;flex-wrap:wrap;gap:4px 24px;padding:16px 0;border-top:1px solid var(--line)}
+.contact div:last-child{border-bottom:1px solid var(--line)}
+.contact .mono{flex:0 0 110px}.contact span:last-child{flex:1 1 200px;min-width:0;overflow-wrap:anywhere}
+footer{background:var(--footer);color:var(--footer-ink);padding:48px 0;font-size:14px}
+footer .consts{display:flex;flex-wrap:wrap;gap:16px 48px;font-family:'JetBrains Mono',monospace;margin-bottom:28px}
+footer .meta{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 32px;opacity:.75}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+<a class="brand" href="#top">[你的名字]</a>
+<nav aria-label="主選單"><a href="#about">關於我</a><a href="#courses">本學期課程</a><a href="#notes">筆記與專案</a><a href="#contact">聯絡方式</a></nav>
+</div></header>
+
+<main id="top">
+<div class="hero"><div class="wrap">
+<div class="text">
+<div class="eyebrow">國立臺灣師範大學 · 物理學系 國際組 · 大一</div>
+<h1>[你的名字]</h1>
+<div class="en">[Your English Name]</div>
+<p>剛進入物理系的新生，正在學習用數學描述世界。這裡放我的課程、筆記，和接下來想做的事。</p>
+<div class="btns"><a class="btn fill" href="#notes">看我的筆記</a><a class="btn" href="#contact">聯絡我</a></div>
+</div>
+<div class="wave">
+<svg viewBox="0 0 600 220" role="img" aria-label="兩條相位不同的正弦波">
+<line x1="0" y1="110" x2="600" y2="110" stroke="currentColor" stroke-opacity=".35" stroke-dasharray="4 5"/>
+<line x1="0" y1="20" x2="0" y2="200" stroke="currentColor" stroke-opacity=".35"/>
+<path d="M0 110 C 40 30, 110 30, 150 110 S 260 190, 300 110 S 410 30, 450 110 S 560 190, 600 110" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
+<path d="M0 110 C 40 190, 110 190, 150 110 S 260 30, 300 110 S 410 190, 450 110 S 560 30, 600 110" fill="none" stroke="currentColor" stroke-opacity=".55" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
+<div class="eq">ψ(x, t) = A sin(kx − ωt + φ)</div>
+</div>
+</div></div>
+
+<section id="about"><div class="wrap cols">
+<h2>關於我</h2>
+<div class="body">
+<p style="margin:0">我是 [你的名字]，目前就讀台灣師大物理系國際組一年級。我選擇物理，是因為 [寫下你的原因]。進入大學後，我最想弄懂的是 [你想弄懂的問題]。</p>
+<div class="facts">
+<div><div class="mono">學校</div>國立臺灣師範大學</div>
+<div><div class="mono">系所</div>物理學系 國際組</div>
+<div><div class="mono">年級</div>大一（2026–27）</div>
+<div><div class="mono">所在地</div>台北</div>
+</div>
+<div class="tags"><span>理論物理</span><span>天文</span><span>程式與模擬</span><span>[你的興趣]</span></div>
+</div>
+</div></section>
+
+<section id="courses"><div class="wrap">
+<h2>本學期課程</h2>
+<p class="sub">把下面三張換成你的課表，想寫幾門都可以。</p>
+<div class="cards">
+<div class="card"><div class="mono" style="color:var(--accent)">必修</div><h3>[課程名稱 1]</h3><p>例：普通物理（力學）。寫下這門課教什麼，以及你學得最有感的一個概念。</p></div>
+<div class="card"><div class="mono" style="color:var(--accent)">必修</div><h3>[課程名稱 2]</h3><p>例：微積分。寫下它在物理裡派上用場的地方。</p></div>
+<div class="card"><div class="mono" style="color:var(--accent)">選修</div><h3>[課程名稱 3]</h3><p>例：一門你因為好奇而選的課。</p></div>
+</div>
+</div></section>
+
+<section id="notes"><div class="wrap">
+<h2>筆記與專案</h2>
+<p class="sub">課堂筆記、習題整理、小型模擬，都可以放在這裡。</p>
+<div>
+<div class="row"><div class="t"><h3>[筆記標題 1]</h3><p>一句話說明這份筆記整理了什麼。</p></div><div class="d mono">[日期]</div><div class="pill">已完成</div></div>
+<div class="row"><div class="t"><h3>[模擬專案標題]</h3><p>例：用程式模擬單擺或拋體運動。</p></div><div class="d mono">[日期]</div><div class="pill">進行中</div></div>
+<div class="row"><div class="t"><h3>[想做的事]</h3><p>例：加入研究室、參加物理競賽、讀完一本想讀的書。</p></div><div class="d mono">[目標日期]</div><div class="pill">計畫中</div></div>
+</div>
+</div></section>
+
+<section id="contact"><div class="wrap cols">
+<h2>聯絡方式</h2>
+<div class="body contact">
+<div><span class="mono">EMAIL</span><span>[your@email.com]</span></div>
+<div><span class="mono">GITHUB</span><span>[你的帳號]</span></div>
+<div><span class="mono">INSTAGRAM</span><span>[你的帳號]</span></div>
+</div>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+<div class="consts"><span>c = 299 792 458 m/s</span><span>h = 6.626 070 15 × 10⁻³⁴ J·s</span><span>k<sub>B</sub> = 1.380 649 × 10⁻²³ J/K</span></div>
+<div class="meta"><span>© 2026 [你的名字] · 國立臺灣師範大學 物理學系 國際組</span><span>以上三個常數都是 SI 定義值</span></div>
+</div></footer>
+</body>
+</html>
