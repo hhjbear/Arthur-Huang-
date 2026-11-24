@@ -167,7 +167,7 @@ def compute_pnl(trades, discount):
 
 
 # ------------------------------------------------------------------ 法人訊號分析 + 蒙地卡羅
-def analyze(code, px, inst, args):
+def analyze(code, px, inst, args, hold=None):
     ins = inst[inst["code"] == code].set_index("date").sort_index()
     df = px.join(ins[["foreign", "trust", "total"]], how="inner").dropna()
     if len(df) < 25:
@@ -222,7 +222,36 @@ def analyze(code, px, inst, args):
     up = (ret_path[:, -1] > 0).mean()
     print(f"\n--- 若你現在賣出 ---")
     print(f"  之後 {H} 日股價比現在高的機率 : {up:.1%}  (越高代表賣太早的可能性越大)")
+
+    if hold:
+        hold_report(code, px["close"].iloc[-1], pool, hold[0], hold[1], args)
     return df
+
+
+def hold_report(code, last, pool, shares, cost_basis, args):
+    """針對你『目前持有』的部位：續抱 vs 現在賣出 的模擬 (用你的實際均價與股數)。"""
+    sell_rate = FEE_RATE * args.discount + (TAX_ETF if code.startswith("00") else TAX_STOCK)
+
+    def pnl_at(price):                       # 以該價賣出，扣賣出手續費+證交稅後的總損益
+        return price * shares * (1 - sell_rate) - cost_basis
+
+    now = pnl_at(last)
+    breakeven = cost_basis / (shares * (1 - sell_rate))
+    days = sorted(set([1, 3, 5, 10, 20, args.horizon]))
+    rng = np.random.default_rng(7)
+    paths = last * np.cumprod(1 + rng.choice(pool, size=(args.sims, max(days))), axis=1)
+
+    print(f"\n=== 你目前持有 {code}：續抱 vs 現在賣出 ===")
+    print(f"  持有 {shares:,.0f} 股，均價 {cost_basis / shares:.2f}，最新 {last:.2f}，損益兩平價 {breakeven:.2f}")
+    print(f"  【現在賣出】確定損益 : {now:+,.0f} 元")
+    print(f"  【續抱模擬】(之後第 N 日賣出，扣成本)")
+    print(f"    {'天數':>4} | {'獲利機率':>7} | {'比現在賣更好':>9} | {'平均損益':>9} | {'中位數':>9} | {'5%~95% 分位':>18}")
+    for d in days:
+        p = pnl_at(paths[:, d - 1])
+        print(f"    {d:>4} | {(p > 0).mean():>7.1%} | {(p > now).mean():>9.1%} | "
+              f"{p.mean():>+9,.0f} | {np.median(p):>+9,.0f} | {np.percentile(p, 5):>+8,.0f} ~ {np.percentile(p, 95):>+7,.0f}")
+    print("  說明：『獲利機率』= 續抱到第 N 日賣出後總損益 > 0；『比現在賣更好』= 損益高於現在賣出。")
+    print("  ※ 若樣本期間股價本來就在漲，結果會偏樂觀；這裡未套用最低手續費。")
 
 
 # ------------------------------------------------------------------ 圖表
@@ -336,7 +365,10 @@ def main():
         if prices[c].empty:
             print(f"[{c}] 抓不到股價 (此腳本僅支援上市股票)")
             continue
-        df = analyze(c, prices[c], inst, args)
+        q = lots.get(c, [])
+        sh = sum(x[0] for x in q)
+        hold = (sh, sum(x[0] * x[1] for x in q)) if sh > 0 else None
+        df = analyze(c, prices[c], inst, args, hold)
         if df is not None:
             plot_inst(c, df)
 
