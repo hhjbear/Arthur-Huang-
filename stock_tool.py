@@ -281,8 +281,21 @@ def main():
     ap.add_argument("--sims", type=int, default=20000)
     args = ap.parse_args()
 
-    trades = pd.read_csv(args.trades, dtype={"code": str}, parse_dates=["date"])
-    trades["action"] = trades["action"].str.lower().str.strip()
+    trades = pd.read_csv(args.trades, dtype={"code": str}, encoding="utf-8-sig")
+    trades.columns = [c.strip().lower() for c in trades.columns]
+    trades = trades.dropna(how="all")                                  # 刪掉完全空白的列
+    bad = trades[trades[["date", "code", "action", "price", "shares"]].isna().any(axis=1)]
+    if len(bad):
+        print("⚠ 以下列有缺漏欄位，已略過 (行號 = Excel 的列號)：")
+        print((bad.index + 2).tolist())
+        trades = trades.drop(bad.index)
+    trades["date"] = pd.to_datetime(trades["date"])
+    trades["code"] = trades["code"].astype(str).str.strip()
+    trades["action"] = trades["action"].astype(str).str.lower().str.strip()
+    trades["price"] = pd.to_numeric(trades["price"])
+    trades["shares"] = pd.to_numeric(trades["shares"])
+    if not trades["action"].isin(["buy", "sell"]).all():
+        raise SystemExit("action 欄只能填 buy 或 sell，請檢查 trades.csv")
     realized, lots = compute_pnl(trades, args.discount)
 
     codes = [args.code] if args.code else [c for c, q in lots.items() if sum(x[0] for x in q) > 0]
