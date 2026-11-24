@@ -267,6 +267,8 @@ def plot_inst(code, df):
 
 # ------------------------------------------------------------------ 主程式
 def main():
+    # 不管從哪個資料夾執行，都切到腳本所在資料夾 (trades.csv、快取、圖表都放這裡)
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     ap = argparse.ArgumentParser()
     ap.add_argument("--trades", default="trades.csv")
     ap.add_argument("--code", help="只分析這檔 (預設分析目前仍持有的所有股票)")
