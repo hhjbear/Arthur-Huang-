@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-台股獲利計算 + 累計圖表 + 三大法人(證交所 T86) + 蒙地卡羅風險模擬 & 機器學習趨勢實驗
+台股獲利計算 + 累計圖表 + 三大法人(證交所 T86) + 買賣勝率模擬
 
 用法：
-    pip install pandas numpy matplotlib requests scikit-learn
-    python stock_tool.py --trades trades.csv --target-mode trend --horizon 15 --target-th 0.02
+    pip install pandas numpy matplotlib requests
+    python stock_tool.py --trades trades.csv
+    python stock_tool.py --trades trades.csv --code 2330 --days 120 --horizon 5 --tp 0.08 --sl 0.05
+
+trades.csv 欄位：date,code,action,price,shares
+    date    : YYYY-MM-DD
+    code    : 股票代號 (例如 2330)
+    action  : buy / sell
+    price   : 成交價
+    shares  : 股數 (1張 = 1000股)
 """
 import argparse
 import os
@@ -26,7 +34,7 @@ plt.rcParams["axes.unicode_minus"] = False
 FEE_RATE = 0.001425          # 手續費牌價
 TAX_STOCK = 0.003            # 一般股票證交稅 (賣出)
 TAX_ETF = 0.001              # ETF 證交稅 (賣出)
-MIN_FEE = 0                  # 最低手續費 (若無低消設為 0 或 1)
+MIN_FEE = 20                 # 最低手續費
 SLEEP = 3.0                  # 證交所限流，請求間隔(秒)
 CACHE_DIR = "inst_cache"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -56,7 +64,8 @@ def to_num(x):
 
 
 def fetch_prices(code, start, end):
-    """逐月抓證交所日收盤價 (上市股票)。"""
+    """逐月抓證交所日 K 線資料 (開高低收量，上市股票)。
+    STOCK_DAY 欄位：0日期 1成交股數 2成交金額 3開盤 4最高 5最低 6收盤 7漲跌價差 8成交筆數"""
     rows = []
     cur = date(start.year, start.month, 1)
     while cur <= end:
@@ -64,12 +73,19 @@ def fetch_prices(code, start, end):
         if js.get("stat") == "OK":
             for d in js.get("data", []):
                 y, m, dd = d[0].split("/")
-                rows.append({"date": pd.Timestamp(int(y) + 1911, int(m), int(dd)), "close": to_num(d[6])})
+                rows.append({"date": pd.Timestamp(int(y) + 1911, int(m), int(dd)),
+                             "open": to_num(d[3]), "high": to_num(d[4]), "low": to_num(d[5]),
+                             "close": to_num(d[6]), "volume": to_num(d[1])})
         time.sleep(SLEEP)
         cur = (cur.replace(day=28) + timedelta(days=4)).replace(day=1)
     if not rows:
-        return pd.DataFrame(columns=["close"])
-    return pd.DataFrame(rows).drop_duplicates("date").set_index("date").sort_index()
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+    df = pd.DataFrame(rows).drop_duplicates("date").set_index("date").sort_index()
+    df = df.dropna(subset=["close"])
+    for k in ("open", "high", "low"):          # 偶爾有「--」(無成交)的欄位，用收盤價補
+        df[k] = df[k].fillna(df["close"])
+    df["volume"] = df["volume"].fillna(0)
+    return df
 
 
 def _pick(fields, *keys):
@@ -93,7 +109,7 @@ def fetch_t86(day):
     fields, data = t.get("fields"), t.get("data")
     if not data or not fields:
         empty = pd.DataFrame(columns=cols)
-        if day < date.today():
+        if day < date.today():          # 過去的非交易日才快取空檔，今天資料可能還沒出
             empty.to_csv(path, index=False)
         return empty
 
@@ -158,7 +174,7 @@ def compute_pnl(trades, discount):
     return pd.DataFrame(realized), lots
 
 
-# ------------------------------------------------------------------ 方法一：蒙地卡羅風險與續抱模擬
+# ------------------------------------------------------------------ 法人訊號分析 + 蒙地卡羅
 def analyze(code, px, inst, args, hold=None):
     ins = inst[inst["code"] == code].set_index("date").sort_index()
     df = px.join(ins[["foreign", "trust", "total"]], how="inner").dropna()
@@ -167,53 +183,45 @@ def analyze(code, px, inst, args, hold=None):
         return None
 
     H = args.horizon
-    tax_rate = TAX_ETF if code.startswith("00") else TAX_STOCK
     df["ret1_next"] = df["close"].pct_change().shift(-1)
     df["fwd"] = df["close"].shift(-H) / df["close"] - 1
-    df["sig"] = df["total"].rolling(3).sum() > 0
+    df["sig"] = df["total"].rolling(3).sum() > 0          # 近3日三大法人合計偏買
     cur_state = bool(df["sig"].iloc[-1])
 
-    sim_shares = hold[0] if (hold and hold[0] > 0) else 1000
-    entry = args.sim_price or px["close"].iloc[-1]
-    notional = entry * sim_shares
-
-    cost = FEE_RATE * args.discount * 2 + tax_rate
+    cost = FEE_RATE * args.discount * 2 + (TAX_ETF if code.startswith("00") else TAX_STOCK)
     hist = df.dropna(subset=["fwd"])
     win_all = (hist["fwd"] > cost).mean()
     same = hist[hist["sig"] == cur_state]
     win_same = (same["fwd"] > cost).mean() if len(same) else np.nan
 
     label = "偏買" if cur_state else "偏賣"
-    print(f"\n=== [方法一：蒙地卡羅模擬] {code} 法人訊號 (近3日三大法人合計{label}) ===")
+    print(f"\n=== {code} 法人訊號 (近3日三大法人合計{label}) ===")
     print(f"  歷史樣本 {len(hist)} 天；買進後 {H} 日扣成本仍獲利的機率：")
     print(f"    全部日子        : {win_all:.1%}")
     print(f"    與目前同訊號({len(same)}天): {win_same:.1%}")
 
+    # 蒙地卡羅：從「與目前同訊號」的隔日報酬中重抽樣
     pool = df[df["sig"] == cur_state]["ret1_next"].dropna().values
     if len(pool) < 20:
         pool = df["ret1_next"].dropna().values
         print("  (同訊號樣本<20，改用全部日報酬重抽樣)")
     rng = np.random.default_rng(42)
     n = args.sims
+    entry = args.sim_price or px["close"].iloc[-1]
     paths = entry * np.cumprod(1 + rng.choice(pool, size=(n, H)), axis=1)
     ret_path = paths / entry - 1
 
     hit_tp = ret_path >= args.tp
     hit_sl = ret_path <= -args.sl
     exit_ret = ret_path[:, -1].copy()
-    for i in range(n):
+    for i in range(n):                                    # 第一個觸發停利/停損的日子出場
         h_tp = np.argmax(hit_tp[i]) if hit_tp[i].any() else H + 1
         h_sl = np.argmax(hit_sl[i]) if hit_sl[i].any() else H + 1
         if min(h_tp, h_sl) <= H - 1:
             exit_ret[i] = ret_path[i, h_tp] if h_tp <= h_sl else ret_path[i, h_sl]
+    net = exit_ret - cost
 
-    buy_fee = max(MIN_FEE, round(notional * FEE_RATE * args.discount))
-    sell_val = notional * (1 + exit_ret)
-    sell_fee = np.maximum(MIN_FEE, np.round(sell_val * FEE_RATE * args.discount))
-    sell_tax = np.round(sell_val * tax_rate)
-    net = (sell_val - buy_fee - sell_fee - sell_tax - notional) / notional
-
-    print(f"\n--- 蒙地卡羅路徑模擬：以 {entry:.2f} 買進 {sim_shares:,.0f} 股，最多持有 {H} 日，停利 {args.tp:.0%} / 停損 {args.sl:.0%} ---")
+    print(f"\n--- 模擬：以 {entry:.2f} 買進，最多持有 {H} 日，停利 {args.tp:.0%} / 停損 {args.sl:.0%} ---")
     print(f"  獲利機率(扣手續費證交稅) : {(net > 0).mean():.1%}")
     print(f"  平均報酬 {net.mean():+.2%}，中位數 {np.median(net):+.2%}")
     print(f"  5%/95% 分位 : {np.percentile(net, 5):+.2%} / {np.percentile(net, 95):+.2%}")
@@ -228,37 +236,20 @@ def analyze(code, px, inst, args, hold=None):
     return df
 
 
-def _estimate_breakeven(cost_basis, shares, discount, tax_rate):
-    lo = cost_basis / shares
-    hi = lo * 1.1 + (MIN_FEE / max(shares, 1))
-    for _ in range(60):
-        mid = 0.5 * (lo + hi)
-        gross = mid * shares
-        fee = max(MIN_FEE, round(gross * FEE_RATE * discount))
-        tax = round(gross * tax_rate)
-        if gross - fee - tax >= cost_basis:
-            hi = mid
-        else:
-            lo = mid
-    return hi
-
-
 def hold_report(code, last, pool, shares, cost_basis, args):
-    tax_rate = TAX_ETF if code.startswith("00") else TAX_STOCK
+    """針對你『目前持有』的部位：續抱 vs 現在賣出 的模擬 (用你的實際均價與股數)。"""
+    sell_rate = FEE_RATE * args.discount + (TAX_ETF if code.startswith("00") else TAX_STOCK)
 
-    def pnl_at(price):
-        gross = np.asarray(price, dtype=float) * shares
-        fee = np.maximum(MIN_FEE, np.round(gross * FEE_RATE * args.discount))
-        tax = np.round(gross * tax_rate)
-        return gross - fee - tax - cost_basis
+    def pnl_at(price):                       # 以該價賣出，扣賣出手續費+證交稅後的總損益
+        return price * shares * (1 - sell_rate) - cost_basis
 
-    now = float(pnl_at(last))
-    breakeven = _estimate_breakeven(cost_basis, shares, args.discount, tax_rate)
+    now = pnl_at(last)
+    breakeven = cost_basis / (shares * (1 - sell_rate))
     days = sorted(set([1, 3, 5, 10, 20, args.horizon]))
     rng = np.random.default_rng(7)
     paths = last * np.cumprod(1 + rng.choice(pool, size=(args.sims, max(days))), axis=1)
 
-    print(f"\n=== [蒙地卡羅續抱評估] {code}：續抱 vs 現在賣出 ===")
+    print(f"\n=== 你目前持有 {code}：續抱 vs 現在賣出 ===")
     print(f"  持有 {shares:,.0f} 股，均價 {cost_basis / shares:.2f}，最新 {last:.2f}，損益兩平價 {breakeven:.2f}")
     print(f"  【現在賣出】確定損益 : {now:+,.0f} 元")
     print(f"  【續抱模擬】(之後第 N 日賣出，扣成本)")
@@ -268,11 +259,11 @@ def hold_report(code, last, pool, shares, cost_basis, args):
         print(f"    {d:>4} | {(p > 0).mean():>7.1%} | {(p > now).mean():>9.1%} | "
               f"{p.mean():>+9,.0f} | {np.median(p):>+9,.0f} | {np.percentile(p, 5):>+8,.0f} ~ {np.percentile(p, 95):>+7,.0f}")
     print("  說明：『獲利機率』= 續抱到第 N 日賣出後總損益 > 0；『比現在賣更好』= 損益高於現在賣出。")
+    print("  ※ 若樣本期間股價本來就在漲，結果會偏樂觀；這裡未套用最低手續費。")
 
 
-# ------------------------------------------------------------------ 方法二：機器學習趨勢 / 波段實驗
 def learn_backtest(code, px, inst, args):
-    """逐日滾動學習：嚴格隔離未來標籤重疊，學習波段市場趨勢狀態。"""
+    """逐日滾動學習：每一天只用『之前』的資料訓練，猜隔天漲/跌，再對照實際結果。"""
     try:
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.linear_model import LogisticRegression
@@ -287,68 +278,45 @@ def learn_backtest(code, px, inst, args):
     close = df["close"]
     r = close.pct_change()
 
+    # ---- 特徵：只用「當天收盤前」已知的資訊
     f = pd.DataFrame(index=df.index)
-    for k in (1, 3, 5, 10, 20):
+    for k in (1, 2, 3, 5):
         f[f"ret{k}"] = close.pct_change(k)
     f["vol5"] = r.rolling(5).std()
     f["vol20"] = r.rolling(20).std()
-    f["vol_ratio"] = f["vol5"] / (f["vol20"] + 1e-8)
-
-    ma5 = close.rolling(5).mean()
-    ma20 = close.rolling(20).mean()
-    ma60 = close.rolling(60).mean()
-    f["ma5_gap"] = close / ma5 - 1
-    f["ma20_gap"] = close / ma20 - 1
-    f["ma60_gap"] = close / ma60 - 1
-    f["ma20_slope"] = ma20.pct_change(5)
-
+    f["ma5_gap"] = close / close.rolling(5).mean() - 1
+    f["ma20_gap"] = close / close.rolling(20).mean() - 1
     for col in ("foreign", "trust", "total"):
-        s = df[col] / (df[col].abs().rolling(20).mean() + 1)
+        s = df[col] / (df[col].abs().rolling(20).mean() + 1)      # 用近20日平均量級標準化
         f[f"{col}_1"] = s
+        f[f"{col}_3"] = s.rolling(3).sum()
         f[f"{col}_5"] = s.rolling(5).sum()
-        f[f"{col}_10"] = s.rolling(10).sum()
     feat_cols = list(f.columns)
 
-    H = max(1, args.horizon)
     data = f.copy()
-    if args.target_mode == "trend":
-        fwd_ret = close.shift(-H) / close - 1
-        fwd_min = pd.concat([close.shift(-k) for k in range(1, H + 1)], axis=1).min(axis=1)
-        fwd_dd = fwd_min / close - 1
-        data["y"] = ((fwd_ret > args.target_th) & (fwd_dd > -args.sl)).astype(float)
-        data.iloc[-H:, data.columns.get_loc("y")] = np.nan
-        purge_gap = H
-        target_desc = f"市場多頭趨勢 (未來{H}日報酬>{args.target_th:+.1%} 且最大回檔>-{args.sl:.0%})"
-    else:
-        data["y"] = (close.shift(-1) > close).astype(float)
-        data.loc[data.index[-1], "y"] = np.nan
-        purge_gap = 1
-        target_desc = "隔日上漲 (ret1_next > 0)"
-
+    data["y"] = (close.shift(-1) > close).astype(float)            # 1 = 隔天漲
+    data.loc[data.index[-1], "y"] = np.nan                         # 最後一天還沒有答案
     valid = data.dropna(subset=feat_cols)
     labeled = valid.dropna(subset=["y"])
 
     min_train = 60
-    n_test = min(args.test_days, len(labeled) - min_train - purge_gap)
+    n_test = min(args.test_days, len(labeled) - min_train)
     if n_test < 30:
-        print(f"  [{code}] 可用資料不足 (有標籤 {len(labeled)} 天)。請加大 --days，例如 --days 500")
+        print(f"  [{code}] 可用資料不足 (有標籤 {len(labeled)} 天)。請加大 --days，例如 --days 450")
         return
     test_idx = labeled.index[-n_test:]
 
     models = {
-        "邏輯迴歸": make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, C=0.3)),
-        "隨機森林": RandomForestClassifier(n_estimators=200, max_depth=4, min_samples_leaf=8,
+        "邏輯迴歸": make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, C=0.5)),
+        "隨機森林": RandomForestClassifier(n_estimators=200, max_depth=4, min_samples_leaf=5,
                                          random_state=0, n_jobs=-1),
     }
     preds = {k: [] for k in models}
     step = max(1, args.retrain)
-    print(f"\n=== [方法二：機器學習滾動實驗] {code} 回測最近 {n_test} 個交易日 ===")
-    print(f"  目標：{target_desc} (每 {step} 天重訓，隔離重疊窗口 {purge_gap} 日)")
-
+    print(f"\n=== {code} 逐日滾動學習：回測最近 {n_test} 個交易日 (每 {step} 天重新訓練) ===")
     for i, t in enumerate(test_idx):
         if i % step == 0:
-            pos_t = labeled.index.get_loc(t)
-            train = labeled.iloc[:max(0, pos_t - purge_gap + 1)]
+            train = labeled[labeled.index < t]                      # 只用 t 以前、答案已揭曉的資料
             for m in models.values():
                 m.fit(train[feat_cols], train["y"])
         x = labeled.loc[[t], feat_cols]
@@ -363,7 +331,7 @@ def learn_backtest(code, px, inst, args):
     tc_out = FEE_RATE * args.discount + (TAX_ETF if code.startswith("00") else TAX_STOCK)
     bh = np.cumprod(1 + rn) - 1
 
-    print(f"  這段期間「多頭趨勢」佔比 {up_rate:.1%}；『永遠猜多數狀態』的基準準確率 = {base:.1%}")
+    print(f"  這段期間實際上漲天數佔 {up_rate:.1%}；『永遠猜多數方向』的基準準確率 = {base:.1%}")
     fig, ax = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
     ax[0].plot(test_idx, bh * 100, label="買進持有", color="gray", lw=2)
     for name, p in preds.items():
@@ -378,16 +346,16 @@ def learn_backtest(code, px, inst, args):
         cum = np.cumprod(1 + pos * rn - cost) - 1
         up_g, dn_g = guess == 1, guess == 0
         print(f"\n  [{name}]")
-        print(f"    趨勢判斷準確率 {acc:.1%}  (基準 {base:.1%}；z 值 {z:+.2f})")
-        print(f"    判定多頭趨勢 {up_g.sum()} 天 (準確率 {hit[up_g].mean() if up_g.any() else float('nan'):.1%})；"
-              f"判定盤整/偏空 {dn_g.sum()} 天 (準確率 {hit[dn_g].mean() if dn_g.any() else float('nan'):.1%})")
-        print(f"    依趨勢狀態持有 (多頭持有、非多頭空手、扣成本) 累計 {cum[-1]:+.1%}，買進持有 {bh[-1]:+.1%}")
-        ax[0].plot(test_idx, cum * 100, label=f"{name} 趨勢策略")
-        ax[1].plot(test_idx, pd.Series(hit.astype(float)).rolling(30).mean().values * 100, label=f"{name} 近30日準確率")
+        print(f"    猜對率 {acc:.1%}  (基準 {base:.1%}；對 50% 的 z 值 {z:+.2f}，|z|>2 才算比亂猜明顯好)")
+        print(f"    猜漲 {up_g.sum()} 次，猜漲時猜對 {hit[up_g].mean() if up_g.any() else float('nan'):.1%}；"
+              f"猜跌 {dn_g.sum()} 次，猜跌時猜對 {hit[dn_g].mean() if dn_g.any() else float('nan'):.1%}")
+        print(f"    照訊號操作 (猜漲持有、猜跌空手、扣成本) 累計 {cum[-1]:+.1%}，買進持有 {bh[-1]:+.1%}")
+        ax[0].plot(test_idx, cum * 100, label=f"{name} 訊號操作")
+        ax[1].plot(test_idx, pd.Series(hit.astype(float)).rolling(30).mean().values * 100, label=f"{name} 近30日猜對率")
     ax[1].axhline(50, color="gray", ls="--", lw=0.8)
-    ax[0].set_title(f"{code} 市場趨勢學習回測 ({target_desc})")
+    ax[0].set_title(f"{code} 逐日滾動學習回測")
     ax[0].set_ylabel("累計報酬 %")
-    ax[1].set_ylabel("準確率 %")
+    ax[1].set_ylabel("猜對率 %")
     for a in ax:
         a.legend()
         a.grid(alpha=0.3)
@@ -395,23 +363,16 @@ def learn_backtest(code, px, inst, args):
     fig.savefig(f"learn_{code}.png", dpi=150)
     print(f"\n已輸出 learn_{code}.png")
 
+    # ---- 用全部歷史資料訓練，猜『下一個交易日』
     if valid.index[-1] == data.index[-1]:
         x_last = valid.loc[[valid.index[-1]], feat_cols]
-        print(f"\n  --- 最新市場趨勢實驗輸出 (以 {valid.index[-1]:%Y-%m-%d} 收盤資料為準) ---")
+        print(f"\n  --- 明日預測 (以 {valid.index[-1]:%Y-%m-%d} 收盤資料為準) ---")
         for name, m in models.items():
             m.fit(labeled[feat_cols], labeled["y"])
-            prob = m.predict_proba(x_last)[0, 1]
-            state_str = "偏多頭趨勢" if prob > 0.5 else "偏盤整/防禦"
-            print(f"    {name}：多頭趨勢機率 {prob:.1%} ({state_str}) [實驗參考]")
+            print(f"    {name}：隔天上漲機率 {m.predict_proba(x_last)[0, 1]:.1%}")
         imp = pd.Series(models["隨機森林"].feature_importances_, index=feat_cols).sort_values(ascending=False)
-        print("    隨機森林認為最重要的趨勢特徵：" + "、".join(f"{k}({v:.2f})" for k, v in imp.head(5).items()))
-
-
-def print_method_comparison(code):
-    """在每檔分析結尾呈現兩種方法的定位差異。"""
-    print(f"\n--- [{code}] 雙方法定位對照 ---")
-    print("  1. 蒙地卡羅模擬：看歷史報酬抽樣下的損益區間與續抱機率，適合評估部位風險與持有時間尺度。")
-    print("  2. 機器學習實驗：看滾動回測準確率、z 值與基準線差距，適合驗證特徵與趨勢假設（未顯著時僅作研究參考）。")
+        print("    隨機森林認為最重要的特徵：" + "、".join(f"{k}({v:.2f})" for k, v in imp.head(5).items()))
+    print("  ※ 短線漲跌接近隨機，猜對率通常只在 50%~55%，請以 z 值與樣本數判斷是否真有效。")
 
 
 # ------------------------------------------------------------------ 圖表
@@ -430,7 +391,7 @@ def plot_cumulative(realized, unrealized_total, path="pnl_cumulative.png"):
     ax[0].set_title(f"累計已實現損益 (含未實現共 {realized['pnl'].sum() + unrealized_total:,.0f} 元)")
     ax[0].set_ylabel("NT$")
     ax[0].grid(alpha=0.3)
-    colors = ["#d62728" if v >= 0 else "#2ca02c" for v in daily.values]
+    colors = ["#d62728" if v >= 0 else "#2ca02c" for v in daily.values]   # 台股：紅漲綠跌
     ax[1].bar(daily.index, daily.values, color=colors)
     ax[1].set_ylabel("單日已實現損益")
     ax[1].grid(alpha=0.3)
@@ -453,33 +414,121 @@ def plot_inst(code, df):
     fig.savefig(f"inst_{code}.png", dpi=150)
     print(f"已輸出 inst_{code}.png")
 
+def kline_report(code, px):
+    """K 線判讀 + 技術指標現況 + K 線圖 (輸出 kline_{code}.png)。"""
+    if px is None or len(px) < 20:
+        print(f"  [{code}] K 線資料不足，略過技術指標判讀。")
+        return
 
+    df = px.copy()
+    close = df["close"]
+    ma5 = close.rolling(5).mean()
+    ma20 = close.rolling(20).mean()
+    ma60 = close.rolling(60).mean()
+
+    # RSI (14)
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    rsi14 = 100 - (100 / (1 + rs))
+
+    last_idx = df.index[-1]
+    c_last = close.iloc[-1]
+    o_last = df["open"].iloc[-1]
+    h_last = df["high"].iloc[-1]
+    l_last = df["low"].iloc[-1]
+
+    # 簡易單根 K 線型態判讀
+    body = abs(c_last - o_last)
+    rng = max(h_last - l_last, 1e-9)
+    lower_shadow = min(o_last, c_last) - l_last
+    upper_shadow = h_last - max(o_last, c_last)
+
+    if c_last > o_last:
+        candle_desc = "紅 K（收高於開）"
+    elif c_last < o_last:
+        candle_desc = "黑 K（收低於開）"
+    else:
+        candle_desc = "十字／平盤 K"
+
+    if lower_shadow > body * 2 and upper_shadow < body:
+        candle_desc += "、下影線較長（低檔有承接）"
+    elif upper_shadow > body * 2 and lower_shadow < body:
+        candle_desc += "、上影線較長（高檔有壓）"
+
+    ma60_str = f"{ma60.iloc[-1]:.2f}" if pd.notna(ma60.iloc[-1]) else "資料不足"
+    rsi_str = f"{rsi14.iloc[-1]:.1f}" if pd.notna(rsi14.iloc[-1]) else "N/A"
+
+    print(f"\n=== {code} K 線與技術指標現況 ({last_idx:%Y-%m-%d}) ===")
+    print(f"  最新 OHLC : 開 {o_last:.2f} / 高 {h_last:.2f} / 低 {l_last:.2f} / 收 {c_last:.2f}  [{candle_desc}]")
+    print(f"  均線位置  : MA5={ma5.iloc[-1]:.2f} | MA20={ma20.iloc[-1]:.2f} | MA60={ma60_str}")
+    print(f"  RSI(14)   : {rsi_str}")
+
+    # 畫近 90 個交易日的 K 線 + 均線 + 成交量
+    sub = df.tail(90).copy()
+    s_ma5 = ma5.reindex(sub.index)
+    s_ma20 = ma20.reindex(sub.index)
+    s_ma60 = ma60.reindex(sub.index)
+
+    x = np.arange(len(sub))
+    fig, ax = plt.subplots(2, 1, figsize=(11, 7.5), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
+
+    for i, (_, row) in enumerate(sub.iterrows()):
+        is_up = row["close"] >= row["open"]
+        col = "#d62728" if is_up else "#2ca02c"          # 台股紅漲綠跌
+        ax[0].vlines(i, row["low"], row["high"], color=col, lw=1.0)
+        b_bot = min(row["open"], row["close"])
+        b_h = max(abs(row["close"] - row["open"]), 0.05)
+        ax[0].add_patch(plt.Rectangle((i - 0.3, b_bot), 0.6, b_h, facecolor=col, edgecolor=col, alpha=0.85))
+
+    ax[0].plot(x, s_ma5.values, label="MA5", lw=1.2)
+    ax[0].plot(x, s_ma20.values, label="MA20", lw=1.4)
+    if s_ma60.notna().any():
+        ax[0].plot(x, s_ma60.values, label="MA60", lw=1.4)
+    ax[0].set_title(f"{code} 日 K 線與均線")
+    ax[0].set_ylabel("價格")
+    ax[0].legend(loc="upper left")
+    ax[0].grid(alpha=0.3)
+
+    vol_colors = ["#d62728" if r["close"] >= r["open"] else "#2ca02c" for _, r in sub.iterrows()]
+    ax[1].bar(x, sub["volume"].values / 1000, color=vol_colors, alpha=0.75)
+    ax[1].set_ylabel("成交量 (張)")
+    ax[1].grid(alpha=0.3)
+
+    step_ticks = max(1, len(sub) // 10)
+    tick_pos = list(range(0, len(sub), step_ticks))
+    ax[1].set_xticks(tick_pos)
+    ax[1].set_xticklabels([sub.index[j].strftime("%m-%d") for j in tick_pos], rotation=30)
+
+    fig.tight_layout()
+    out_path = f"kline_{code}.png"
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"  已輸出 {out_path}")
 # ------------------------------------------------------------------ 主程式
 def main():
+    # 不管從哪個資料夾執行，都切到腳本所在資料夾 (trades.csv、快取、圖表都放這裡)
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     ap = argparse.ArgumentParser()
     ap.add_argument("--trades", default="trades.csv")
     ap.add_argument("--code", help="只分析這檔 (預設分析目前仍持有的所有股票)")
     ap.add_argument("--discount", type=float, default=0.6, help="手續費折扣，0.6 = 六折")
-    ap.add_argument("--days", type=int, default=450, help="三大法人回溯日曆天數")
-    ap.add_argument("--horizon", type=int, default=15, help="波段趨勢觀察交易日數 (預設 15 日)")
+    ap.add_argument("--days", type=int, default=450, help="三大法人回溯日曆天數 (越長越準，但第一次抓越久)")
+    ap.add_argument("--horizon", type=int, default=5, help="模擬持有交易日數")
     ap.add_argument("--tp", type=float, default=0.08, help="停利比例")
-    ap.add_argument("--sl", type=float, default=0.05, help="停損比例 / 趨勢最大回檔容忍")
+    ap.add_argument("--sl", type=float, default=0.05, help="停損比例")
     ap.add_argument("--sim-price", type=float, help="模擬進場價 (預設最新收盤)")
     ap.add_argument("--sims", type=int, default=20000)
     ap.add_argument("--learn", action=argparse.BooleanOptionalAction, default=True,
-                    help="滾動學習回測 (預設開啟；不想跑請加 --no-learn)")
+                    help="逐日滾動學習回測 (預設開啟；不想跑請加 --no-learn)")
     ap.add_argument("--test-days", type=int, default=180, help="回測最近幾個交易日")
     ap.add_argument("--retrain", type=int, default=5, help="每幾天重新訓練一次模型")
-    ap.add_argument("--target-mode", choices=["trend", "next1"], default="trend",
-                    help="學習目標：trend=波段市場趨勢(預設), next1=隔日漲跌")
-    ap.add_argument("--target-th", type=float, default=0.02,
-                    help="當 --target-mode=trend 時的波段報酬門檻 (例如 0.02 代表百分之二)")
     args = ap.parse_args()
 
     trades = pd.read_csv(args.trades, dtype={"code": str}, encoding="utf-8-sig")
     trades.columns = [c.strip().lower() for c in trades.columns]
-    trades = trades.dropna(how="all")
+    trades = trades.dropna(how="all")                                  # 刪掉完全空白的列
     bad = trades[trades[["date", "code", "action", "price", "shares"]].isna().any(axis=1)]
     if len(bad):
         print("⚠ 以下列有缺漏欄位，已略過 (行號 = Excel 的列號)：")
@@ -498,12 +547,13 @@ def main():
     if not codes:
         codes = sorted(trades["code"].unique())
 
-    start = date.today() - timedelta(days=args.days + 80)
+    start = date.today() - timedelta(days=args.days + 120)       # 多抓 120 天給 60 日均線等指標暖機
     prices = {}
     print("抓取股價...")
     for c in codes:
         prices[c] = fetch_prices(c, start, date.today())
 
+    # 損益彙總
     print("\n================ 損益彙總 ================")
     if not realized.empty:
         print(realized.groupby("code")["pnl"].sum().round(0).to_string())
@@ -521,6 +571,7 @@ def main():
     print(f"未實現合計：{unrealized_total:+,.0f} 元")
     plot_cumulative(realized, unrealized_total)
 
+    # 三大法人 + 模擬
     print("\n抓取三大法人資料 (第一次較久，之後走快取)...")
     inst = fetch_institutional(args.days)
     if inst.empty:
@@ -536,9 +587,9 @@ def main():
         df = analyze(c, prices[c], inst, args, hold)
         if df is not None:
             plot_inst(c, df)
-        if args.learn:
+        kline_report(c, prices[c])                       # K 線判讀 + 技術指標現況 + K 線圖
+        if args.learn:                                   # 接著跑逐日滾動學習 (K線+指標+法人 結合)
             learn_backtest(c, prices[c], inst, args)
-        print_method_comparison(c)
 
     print("\n※ 模擬只是用歷史統計做機率估計，不代表未來，也不是投資建議。")
 
